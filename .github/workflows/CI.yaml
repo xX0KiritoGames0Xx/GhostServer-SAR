@@ -87,10 +87,10 @@ jobs:
         env:
           QtToolsPath: ${{ env.QT_ROOT_DIR }}\bin
           QtMsBuild: ${{github.workspace}}/ExternalLibraries/qtvsaddin/QtMsBuild
-        run: msbuild -m -p:Configuration=DebugGUI GhostServer.sln
+        run: msbuild -m -p:Configuration=ReleaseGUI GhostServer.sln
 
       - name: Build CLI
-        run: msbuild -m -p:Configuration=DebugCLI GhostServer.sln
+        run: msbuild -m -p:Configuration=ReleaseCLI GhostServer.sln
 
       - name: Deploy Qt
         shell: cmd
