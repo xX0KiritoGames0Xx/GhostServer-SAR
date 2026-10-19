@@ -82,7 +82,7 @@ jobs:
 
           rc /nologo /fo ..\build\gui\obj\icon.res icon.rc
 
-          cl /nologo /std:c++17 /EHsc /O2 /MD /MP /Zc:wchar_t /Zc:__cplusplus `
+          cl /nologo /std:c++17 /permissive- /EHsc /O2 /MD /MP /Zc:wchar_t /Zc:__cplusplus `
             /DSFML_STATIC /DGHOST_GUI /DUNICODE /D_UNICODE /DNOMINMAX `
             /DQT_WIDGETS_LIB /DQT_GUI_LIB /DQT_CORE_LIB `
             /I..\lib\SFML\include /I. `
