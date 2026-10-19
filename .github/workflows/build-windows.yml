@@ -1,0 +1,119 @@
+name: Build Windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.8.*"
+
+jobs:
+  build:
+    name: ${{ matrix.variant }} (x64, Release)
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [gui, cli]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Puts cl.exe, link.exe and rc.exe on PATH (MSVC v143 toolset, same as the vcxproj).
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # The CLI build has no Qt dependency; only the GUI needs it.
+      - name: Install Qt
+        if: matrix.variant == 'gui'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      # The prebuilt static SFML libs in lib/SFML/lib/windows are linked against the
+      # dynamic CRT (/MD), matching the Release configs in GhostServer.vcxproj.
+      - name: Build CLI (GhostServer_CLI.exe)
+        if: matrix.variant == 'cli'
+        shell: pwsh
+        working-directory: GhostServer
+        run: |
+          New-Item -ItemType Directory -Force -Path ..\build\cli\obj, ..\dist | Out-Null
+
+          rc /nologo /fo ..\build\cli\obj\icon.res icon.rc
+
+          cl /nologo /std:c++17 /EHsc /O2 /MD /MP /Zc:wchar_t `
+            /DSFML_STATIC /I..\lib\SFML\include /I. `
+            main_cli.cpp chatcommands.cpp commands.cpp networkmanager.cpp `
+            /Fo:..\build\cli\obj\ `
+            /Fe:..\dist\GhostServer_CLI.exe `
+            /link /SUBSYSTEM:CONSOLE /LIBPATH:..\lib\SFML\lib\windows `
+            ..\build\cli\obj\icon.res `
+            sfml-network-s.lib sfml-system-s.lib winmm.lib ws2_32.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Qt VS Tools (QtMsBuild) isn't available on the runner, so run Qt's moc/uic/rcc
+      # by hand, exactly as the Makefile does, and compile with cl.
+      - name: Build GUI (GhostServer.exe)
+        if: matrix.variant == 'gui'
+        shell: pwsh
+        working-directory: GhostServer
+        run: |
+          New-Item -ItemType Directory -Force -Path ..\build\gui\obj, ..\dist | Out-Null
+
+          $qt = $env:QT_ROOT_DIR
+          Write-Host "Qt root: $qt"
+
+          uic mainwindow.ui -o ui_mainwindow.h
+          moc mainwindow.h -o mainwindow_qt.cpp -DGHOST_GUI
+          moc networkmanager.h -o networkmanager_qt.cpp -DGHOST_GUI
+          rcc GhostServer.qrc -o GhostServer_qrc.cpp
+
+          rc /nologo /fo ..\build\gui\obj\icon.res icon.rc
+
+          cl /nologo /std:c++17 /EHsc /O2 /MD /MP /Zc:wchar_t /Zc:__cplusplus `
+            /DSFML_STATIC /DGHOST_GUI /DUNICODE /D_UNICODE /DNOMINMAX `
+            /DQT_WIDGETS_LIB /DQT_GUI_LIB /DQT_CORE_LIB `
+            /I..\lib\SFML\include /I. `
+            /I"$qt\include" /I"$qt\include\QtCore" /I"$qt\include\QtGui" /I"$qt\include\QtWidgets" `
+            main.cpp mainwindow.cpp chatcommands.cpp commands.cpp networkmanager.cpp `
+            mainwindow_qt.cpp networkmanager_qt.cpp GhostServer_qrc.cpp `
+            /Fo:..\build\gui\obj\ `
+            /Fe:..\dist\GhostServer.exe `
+            /link /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup `
+            /LIBPATH:..\lib\SFML\lib\windows /LIBPATH:"$qt\lib" `
+            ..\build\gui\obj\icon.res `
+            sfml-network-s.lib sfml-system-s.lib winmm.lib ws2_32.lib `
+            Qt6Core.lib Qt6Gui.lib Qt6Widgets.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Copies the Qt DLLs and plugins next to the exe so it runs on a machine without Qt.
+      - name: Bundle Qt runtime (windeployqt)
+        if: matrix.variant == 'gui'
+        shell: pwsh
+        run: windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw dist\GhostServer.exe
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "GhostServer-${{ matrix.variant }}-windows-x64"
+          Compress-Archive -Path dist\* -DestinationPath "$name.zip" -Force
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GhostServer-${{ matrix.variant }}-windows-x64
+          path: GhostServer-${{ matrix.variant }}-windows-x64.zip
+          if-no-files-found: error
